@@ -24,7 +24,7 @@ import (
 	"github.com/benbjohnson/litestream"
 	"github.com/benbjohnson/litestream/abs"
 	"github.com/benbjohnson/litestream/file"
-	"github.com/benbjohnson/litestream/gs"
+	"github.com/benbjohnson/litestream/gcs"
 	"github.com/benbjohnson/litestream/internal"
 	"github.com/benbjohnson/litestream/s3"
 	"github.com/benbjohnson/litestream/sftp"
@@ -605,8 +605,8 @@ func NewReplicaFromConfig(c *ReplicaConfig, db *litestream.DB) (_ *litestream.Re
 		if r.Client, err = newS3ReplicaClientFromConfig(c, r); err != nil {
 			return nil, err
 		}
-	case "gs":
-		if r.Client, err = newGSReplicaClientFromConfig(c, r); err != nil {
+	case "gcs":
+		if r.Client, err = newGCSReplicaClientFromConfig(c, r); err != nil {
 			return nil, err
 		}
 	case "abs":
@@ -718,13 +718,13 @@ func newS3ReplicaClientFromConfig(c *ReplicaConfig, _ *litestream.Replica) (_ *s
 	return client, nil
 }
 
-// newGSReplicaClientFromConfig returns a new instance of gs.ReplicaClient built from config.
-func newGSReplicaClientFromConfig(c *ReplicaConfig, _ *litestream.Replica) (_ *gs.ReplicaClient, err error) {
+// newGCSReplicaClientFromConfig returns a new instance of gcs.ReplicaClient built from config.
+func newGCSReplicaClientFromConfig(c *ReplicaConfig, _ *litestream.Replica) (_ *gcs.ReplicaClient, err error) {
 	// Ensure URL & constituent parts are not both specified.
 	if c.URL != "" && c.Path != "" {
-		return nil, fmt.Errorf("cannot specify url & path for gs replica")
+		return nil, fmt.Errorf("cannot specify url & path for gcs replica")
 	} else if c.URL != "" && c.Bucket != "" {
-		return nil, fmt.Errorf("cannot specify url & bucket for gs replica")
+		return nil, fmt.Errorf("cannot specify url & bucket for gcs replica")
 	}
 
 	bucket, path := c.Bucket, c.Path
@@ -747,11 +747,11 @@ func newGSReplicaClientFromConfig(c *ReplicaConfig, _ *litestream.Replica) (_ *g
 
 	// Ensure required settings are set.
 	if bucket == "" {
-		return nil, fmt.Errorf("bucket required for gs replica")
+		return nil, fmt.Errorf("bucket required for gcs replica")
 	}
 
 	// Build replica.
-	client := gs.NewReplicaClient()
+	client := gcs.NewReplicaClient()
 	client.Bucket = bucket
 	client.Path = path
 	return client, nil

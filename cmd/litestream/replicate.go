@@ -17,7 +17,7 @@ import (
 	"github.com/benbjohnson/litestream"
 	"github.com/benbjohnson/litestream/abs"
 	"github.com/benbjohnson/litestream/file"
-	"github.com/benbjohnson/litestream/gs"
+	"github.com/benbjohnson/litestream/gcs"
 	"github.com/benbjohnson/litestream/s3"
 	"github.com/benbjohnson/litestream/sftp"
 )
@@ -120,14 +120,8 @@ func (c *ReplicateCommand) Run() (err error) {
 
 	levels := c.Config.CompactionLevels()
 	c.Store = litestream.NewStore(dbs, levels)
-	// Only override default snapshot interval if explicitly set in config
-	if c.Config.Snapshot.Interval != nil {
-		c.Store.SnapshotInterval = *c.Config.Snapshot.Interval
-	}
-	// Only override default snapshot retention if explicitly set in config
-	if c.Config.Snapshot.Retention != nil {
-		c.Store.SnapshotRetention = *c.Config.Snapshot.Retention
-	}
+	c.Store.SnapshotInterval = c.Config.Snapshot.Interval
+	c.Store.SnapshotRetention = c.Config.Snapshot.Retention
 	if err := c.Store.Open(context.Background()); err != nil {
 		return fmt.Errorf("cannot open store: %w", err)
 	}
@@ -142,7 +136,7 @@ func (c *ReplicateCommand) Run() (err error) {
 			slog.Info("replicating to", "path", client.Path())
 		case *s3.ReplicaClient:
 			slog.Info("replicating to", "bucket", client.Bucket, "path", client.Path, "region", client.Region, "endpoint", client.Endpoint)
-		case *gs.ReplicaClient:
+		case *gcs.ReplicaClient:
 			slog.Info("replicating to", "bucket", client.Bucket, "path", client.Path)
 		case *abs.ReplicaClient:
 			slog.Info("replicating to", "bucket", client.Bucket, "path", client.Path, "endpoint", client.Endpoint)

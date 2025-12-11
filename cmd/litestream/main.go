@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -37,33 +36,6 @@ var (
 
 // errStop is a terminal error for indicating program should quit.
 var errStop = errors.New("stop")
-
-// Sentinel errors for configuration validation
-var (
-	ErrInvalidSnapshotInterval   = errors.New("snapshot interval must be greater than 0")
-	ErrInvalidSnapshotRetention  = errors.New("snapshot retention must be greater than 0")
-	ErrInvalidCompactionInterval = errors.New("compaction interval must be greater than 0")
-	ErrInvalidSyncInterval       = errors.New("sync interval must be greater than 0")
-	ErrConfigFileNotFound        = errors.New("config file not found")
-)
-
-// ConfigValidationError wraps a validation error with additional context
-type ConfigValidationError struct {
-	Err   error
-	Field string
-	Value interface{}
-}
-
-func (e *ConfigValidationError) Error() string {
-	if e.Value != nil {
-		return fmt.Sprintf("%s: %v (got %v)", e.Field, e.Err, e.Value)
-	}
-	return fmt.Sprintf("%s: %v", e.Field, e.Err)
-}
-
-func (e *ConfigValidationError) Unwrap() error {
-	return e.Err
-}
 
 func main() {
 	m := NewMain()
@@ -218,8 +190,8 @@ type Config struct {
 
 // SnapshotConfig configures snapshots.
 type SnapshotConfig struct {
-	Interval  *time.Duration `yaml:"interval"`
-	Retention *time.Duration `yaml:"retention"`
+	Interval  time.Duration `yaml:"interval"`
+	Retention time.Duration `yaml:"retention"`
 }
 
 // LoggingConfig configures logging.
@@ -245,71 +217,16 @@ func (c *Config) propagateGlobalSettings() {
 
 // DefaultConfig returns a new instance of Config with defaults set.
 func DefaultConfig() Config {
-	defaultSnapshotInterval := 24 * time.Hour
-	defaultSnapshotRetention := 24 * time.Hour
 	return Config{
 		Levels: []*CompactionLevelConfig{
 			{Interval: 5 * time.Minute},
 			{Interval: 1 * time.Hour},
 		},
 		Snapshot: SnapshotConfig{
-			Interval:  &defaultSnapshotInterval,
-			Retention: &defaultSnapshotRetention,
+			Interval:  24 * time.Hour,
+			Retention: 24 * time.Hour,
 		},
 	}
-}
-
-// Validate returns an error if config contains invalid settings.
-func (c *Config) Validate() error {
-	// Validate snapshot intervals
-	if c.Snapshot.Interval != nil && *c.Snapshot.Interval <= 0 {
-		return &ConfigValidationError{
-			Err:   ErrInvalidSnapshotInterval,
-			Field: "snapshot.interval",
-			Value: *c.Snapshot.Interval,
-		}
-	}
-	if c.Snapshot.Retention != nil && *c.Snapshot.Retention <= 0 {
-		return &ConfigValidationError{
-			Err:   ErrInvalidSnapshotRetention,
-			Field: "snapshot.retention",
-			Value: *c.Snapshot.Retention,
-		}
-	}
-
-	// Validate compaction level intervals
-	for i, level := range c.Levels {
-		if level.Interval <= 0 {
-			return &ConfigValidationError{
-				Err:   ErrInvalidCompactionInterval,
-				Field: fmt.Sprintf("levels[%d].interval", i),
-				Value: level.Interval,
-			}
-		}
-	}
-
-	// Validate database configs
-	for _, db := range c.DBs {
-		// Validate sync intervals for replicas
-		if db.Replica != nil && db.Replica.SyncInterval != nil && *db.Replica.SyncInterval <= 0 {
-			return &ConfigValidationError{
-				Err:   ErrInvalidSyncInterval,
-				Field: fmt.Sprintf("dbs[%s].replica.sync-interval", db.Path),
-				Value: *db.Replica.SyncInterval,
-			}
-		}
-		for i, replica := range db.Replicas {
-			if replica.SyncInterval != nil && *replica.SyncInterval <= 0 {
-				return &ConfigValidationError{
-					Err:   ErrInvalidSyncInterval,
-					Field: fmt.Sprintf("dbs[%s].replicas[%d].sync-interval", db.Path, i),
-					Value: *replica.SyncInterval,
-				}
-			}
-		}
-	}
-
-	return nil
 }
 
 // CompactionLevels returns a full list of compaction levels include L0.
@@ -338,46 +255,22 @@ func (c *Config) DBConfig(path string) *DBConfig {
 	return nil
 }
 
-// OpenConfigFile opens a configuration file and returns a reader.
-// Expands the filename path if needed.
-func OpenConfigFile(filename string) (io.ReadCloser, error) {
-	// Expand filename, if necessary.
-	filename, err := expand(filename)
-	if err != nil {
-		return nil, err
-	}
-
-	// Open configuration file.
-	f, err := os.Open(filename)
-	if os.IsNotExist(err) {
-		return nil, fmt.Errorf("%w: %s", ErrConfigFileNotFound, filename)
-	} else if err != nil {
-		return nil, err
-	}
-
-	return f, nil
-}
-
 // ReadConfigFile unmarshals config from filename. Expands path if needed.
 // If expandEnv is true then environment variables are expanded in the config.
-func ReadConfigFile(filename string, expandEnv bool) (Config, error) {
-	f, err := OpenConfigFile(filename)
-	if err != nil {
-		return DefaultConfig(), err
-	}
-	defer f.Close()
-
-	return ParseConfig(f, expandEnv)
-}
-
-// ParseConfig unmarshals config from a reader.
-// If expandEnv is true then environment variables are expanded in the config.
-func ParseConfig(r io.Reader, expandEnv bool) (_ Config, err error) {
+func ReadConfigFile(filename string, expandEnv bool) (_ Config, err error) {
 	config := DefaultConfig()
 
-	// Read configuration.
-	buf, err := io.ReadAll(r)
+	// Expand filename, if necessary.
+	filename, err = expand(filename)
 	if err != nil {
+		return config, err
+	}
+
+	// Read configuration.
+	buf, err := os.ReadFile(filename)
+	if os.IsNotExist(err) {
+		return config, fmt.Errorf("config file not found: %s", filename)
+	} else if err != nil {
 		return config, err
 	}
 
@@ -386,20 +279,8 @@ func ParseConfig(r io.Reader, expandEnv bool) (_ Config, err error) {
 		buf = []byte(os.ExpandEnv(string(buf)))
 	}
 
-	// Save defaults before unmarshaling
-	defaultSnapshotInterval := config.Snapshot.Interval
-	defaultSnapshotRetention := config.Snapshot.Retention
-
 	if err := yaml.Unmarshal(buf, &config); err != nil {
 		return config, err
-	}
-
-	// Restore defaults if they were overwritten with nil by empty YAML sections
-	if config.Snapshot.Interval == nil {
-		config.Snapshot.Interval = defaultSnapshotInterval
-	}
-	if config.Snapshot.Retention == nil {
-		config.Snapshot.Retention = defaultSnapshotRetention
 	}
 
 	// Normalize paths.
@@ -411,11 +292,6 @@ func ParseConfig(r io.Reader, expandEnv bool) (_ Config, err error) {
 
 	// Propage settings from global config to replica configs.
 	config.propagateGlobalSettings()
-
-	// Validate configuration
-	if err := config.Validate(); err != nil {
-		return config, err
-	}
 
 	// Configure logging.
 	logOutput := os.Stdout
